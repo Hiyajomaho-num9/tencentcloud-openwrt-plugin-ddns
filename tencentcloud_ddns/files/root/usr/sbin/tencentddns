@@ -3,6 +3,9 @@
 NAME=tencentddns
 log_file=/var/log/$NAME.log
 
+console_log() {
+	echo "$DATE [TENCENTDDNS] $@" >> $log_file
+}
 uci_get_by_name() {
 	local ret=$(uci get $NAME.$1.$2 2>/dev/null)
 	echo ${ret:=$3}
@@ -32,37 +35,49 @@ intelnetip() {
 resolve2ip() {
 	# resolve2ip domain<string>
 	domain=$1
-	tmp_ip=`nslookup    $domain f1g1ns1.dnspod.net 2>/dev/null | sed '/^Server/d; /#53$/d' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | tail -n1`
+	tmp_ip=`nslookup    $domain f1g1ns1.dnspod.net 2>/dev/null | sed '/^Server/d; /#53$/d' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'`
 	if [ "Z$tmp_ip" == "Z" ]; then
-		tmp_ip=`nslookup $domain f1g1ns2.dnspod.net  2>/dev/null | sed '/^Server/d; /#53$/d' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | tail -n1`
+		tmp_ip=`nslookup $domain f1g1ns2.dnspod.net  2>/dev/null | sed '/^Server/d; /#53$/d' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'`
 	fi
 	if [ "Z$tmp_ip" == "Z" ]; then
-		tmp_ip=`nslookup $domain 114.114.115.115 2>/dev/null | sed '/^Server/d; /#53$/d' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | tail -n1`
+		tmp_ip=`nslookup $domain 114.114.115.115 2>/dev/null | sed '/^Server/d; /#53$/d' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'`
 	fi
 	if [ "Z$tmp_ip" == "Z" ]; then
-		tmp_ip=`curl -sL --connect-timeout 3 "119.29.29.29/d?dn=$domain"`
+		tmp_ip=`curl -sL --connect-timeout 3 "119.29.29.29/d?dn=$domain"` | tr ";" "\n"
 	fi
 	echo -n $tmp_ip
 }
 
 check_tencentddns() {
-	echo "$DATE WAN-IP: ${ip}"
+	ip=$1
+	domain="$sub_dm.$main_dm"
+	console_log "CheckDdns: domain with ip DOMAIN:$domain, WAN-IP: ${ip}"
 	if [ "Z$ip" == "Z" ]; then
-		echo "$DATE ERROR, cant get WAN-IP..."
+		console_log "CheckDdns:ERROR, cant get WAN-IP..."
+		echo $rrid_list
 		return 0
 	fi
-	current_ip=$(resolve2ip "$sub_dm.$main_dm")
-	if [ "Z$current_ip" == "Z" ]; then
-		rrid='' # NO Resolve IP Means new Record_ID
-	fi
-	echo "$DATE DOMAIN-IP: ${current_ip}"
-	if [ "Z$ip" == "Z$current_ip" ]; then
-		echo "$DATE IP dont need UPDATE..."
-		return 0
-	else
-		echo "$DATE UPDATING..."
+	current_ip_list=$(resolve2ip $domain)
+	if [ "Z$current_ip_list" == "Z" ]; then
+		console_log "CheckDdns:Empty result from resolve2ip DOMAIN:$domain"
+		echo $rrid_list
 		return 1
 	fi
+
+	for current_ip in $current_ip_list; do
+		console_log "CheckDdns:Current DOMAIN-IP: ${current_ip}"
+		if [ "Z$ip" == "Z$current_ip" ]; then
+			rrid=$(query_recordid | get_recordid4 $ip)
+			if [ "Z$rrid" != "Z" ]; then
+				console_log "CheckDdns:IP dont need UPDATE, RecordID:$rrid, new RecordID List:$rrid_list"
+				echo $(pop_record_id $rrid)
+				return 0
+			fi
+		fi
+	done
+	console_log "CheckDdns:Not found WAN-IP:$ip in DOMAIN:$domain UPDATING..."
+	echo $rrid_list
+	return 1
 }
 
 urlencode() {
@@ -78,89 +93,144 @@ urlencode() {
 }
 
 send_request() {
-        curl -s -X POST https://dnsapi.cn/$1 -d "login_token=$ak_id,$ak_token&format=json&"$2
+		curl -s -X POST https://dnsapi.cn/$1 -d "login_token=$ak_id,$ak_token&format=json&"$2
 }
 
 get_recordid() {
-        sed 's/"records"/\n/g' | sed -n '2p' | sed 's/ttl/\n/g' | sed -n 's/.*"id[^0-9]*\([0-9]*\).*/\1\n/p' | sort -ru | sed /^$/d
+		sed 's/"records"/\n/g' | sed -n '2p' | sed 's/ttl/\n/g' | sed -n 's/.*"id[^0-9]*\([0-9]*\).*/\1\n/p' | sort -ru | sed /^$/d
 }
 
 
 get_recordid2() {
-        sed 's/"record"/\n/g' | sed -n '2p' |  sed -n 's/.*"id[^0-9]*\([0-9]*\).*/\1\n/p' | sort -ru | sed /^$/d
+		sed 's/"record"/\n/g' | sed -n '2p' |  sed -n 's/.*"id[^0-9]*\([0-9]*\).*/\1\n/p' | sort -ru | sed /^$/d
+}
+
+get_recordid3() {
+		jsonfilter -e "@.records[*]['id']"
+}
+
+get_recordid4() {
+		jsonfilter -e "@.records[@.value='$1']['id']"
 }
 
 query_recordid() {
-        send_request "Record.List" "domain=$main_dm&sub_domain=$sub_dm&record_type=A"
+		send_request "Record.List" "domain=$main_dm&sub_domain=$sub_dm&record_type=A"
 }
 
 update_record() {
-        send_request "Record.Modify" "domain=$main_dm&sub_domain=$sub_dm&record_id=$1&record_type=A&record_line=%e9%bb%98%e8%ae%a4&value=$ip"
+		send_request "Record.Modify" "domain=$main_dm&sub_domain=$sub_dm&record_id=$1&record_type=A&record_line=%e9%bb%98%e8%ae%a4&value=$2"
 }
 
 add_record() {
-        send_request "Record.Create" "domain=$main_dm&sub_domain=$sub_dm&record_type=A&record_line=%e9%bb%98%e8%ae%a4&value=$ip"
+		send_request "Record.Create" "domain=$main_dm&sub_domain=$sub_dm&record_type=A&record_line=%e9%bb%98%e8%ae%a4&value=$1"
 }
 
 del_record() {
-        send_request "Record.Remove" "domain=$main_dm&record_id=$1"
+		send_request "Record.Remove" "domain=$main_dm&record_id=$1"
+}
+
+get_first_record_id() {
+		echo "$rrid_list" | cut -d " " -f1
+}
+
+pop_record_id() {
+		echo "$rrid_list" | sed "s/$1//g"
 }
 
 do_ddns_record() {
-	if uci_bool_by_name base clean ; then
-		query_recordid | get_recordid | while read rr; do
-			echo "$DATE Clean record $sub_dm.$main_dm: $rr"
-			del_record $rr >/dev/null
-			timestamp=$(date -u "+%Y-%m-%dT%H%%3A%M%%3A%SZ")
-		done
-		rrid=''
-	fi
+	ip=$1
+	console_log "DNS_RECORD:IP:$ip, RecordIDList:$rrid_list"
 	if [ "Z$rrid" == "Z" ]; then
-		rrid=`query_recordid | get_recordid`
+		rrid=$(get_first_record_id)
+		rrid_list=$(pop_record_id $rrid)
 	fi
+	console_log "DNS_RECORD:IP:$ip, RecordID:$rrid, RecordIDList:$rrid_list"
 	if [ "Z$rrid" == "Z" ]; then
-		rrid=`add_record | get_recordid2`
-		echo "$DATE ADD record $rrid"
+		rrid=`add_record $ip | get_recordid2`
+		console_log "DNS_RECORD:ADD record $rrid"
 	else
-		update_record $rrid >/dev/null 2>&1
-		echo "$DATE UPDATE record $rrid"
+		update_record $rrid $ip >/dev/null 2>&1
+		console_log "DNS_RECORD:UPDATE record $rrid"
 	fi
 	if [ "Z$rrid" == "Z" ]; then
 		# failed
-		echo "$DATE # ERROR, Please Check Config/Time"
+		console_log "DNS_RECORD:# ERROR, Please Check Config/Time"
 	else
 		# save rrid
-		uci set tencentddns.base.record_id=$rrid
-		uci commit tencentddns
-		echo "$DATE # UPDATED($ip)"
+		console_log "DNS_RECORD:# UPDATED($ip)"
 	fi
+	echo $rrid_list
+	console_log "DDNS_RECORD: ReturnValue:$rrid_list"
 }
 
 clean_log() {
 	if [ $(cat $log_file 2>/dev/null | wc -l) -ge 16 ]; then
 		rm -f $log_file && touch $log_file
-		echo "$DATE Log Cleaned"
+		console_log "Log Cleaned"
 	fi
 }
 
-[ -x /usr/bin/openssl -a -x /usr/bin/curl -a -x /bin/sed ] ||
-	( echo "Need [ openssl + curl + sed ]" && exit 1 )
+do_get_iface_ip() {
+	iface=$1
+	if [ "Z$iface" == "Zinternet" -o "Z$iface" == "Z" ]; then
+		ip=$(intelnetip)
+	else
+		ip=$(ubus call network.interface.$iface status | grep '"address"' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
+	fi
+	echo $ip
+}
+
+do_iface_ddns() {
+	iface=$1
+	ip=`do_get_iface_ip $iface`
+	console_log "DoDdns:WAN_IF:$iface, IP:$ip, RecordIDList:$rrid_list"
+	rrid_list=$(check_tencentddns $ip)
+	ret_val=$?
+	if [ $ret_val -eq 0 ]; then
+		console_log "DoDdns: CheckDdns ret $ret_val, returning"
+		echo $rrid_list
+		return 
+	fi
+
+	rrid_list=$(do_ddns_record $ip)
+	echo "$rrid_list"
+}
+
+do_cleanup() {
+	console_log "DoCleanUp:Start purge dns record"
+	query_recordid | get_recordid | while read rr; do
+		console_log "DoCleanUp:Clean record $sub_dm.$main_dm: $rr"
+		del_record $rr >/dev/null
+		timestamp=$(date -u "+%Y-%m-%dT%H%%3A%M%%3A%SZ")
+	done
+}
+
+check_pre_cleanup() {
+	console_log "CleanUpCheck: Check if need clean up all record"
+	if uci_bool_by_name base clean ; then
+		do_cleanup
+	fi
+}
+
+[ -x /usr/bin/openssl -a -x /usr/bin/curl -a -x /bin/sed -a -x /usr/bin/jsonfilter ] ||
+	( echo "Need [ openssl + curl + sed + jsonfilter]" && exit 1 )
 
 ak_id=$(uci_get_by_name   base key_id)
 ak_token=$(uci_get_by_name  base key_token)
-rrid=$(uci_get_by_name    base record_id)
 main_dm=$(uci_get_by_name base main_domain)
 sub_dm=$(uci_get_by_name  base sub_domain)
 
 iface=$(uci_get_by_name   base interface)
-if [ "Z$iface" == "Zinternet" -o "Z$iface" == "Z" ]; then
-	ip=$(intelnetip)
-else
-	ip=$(ubus call network.interface.$iface status | grep '"address"' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
-fi
 
 DATE=$(date +'%Y-%m-%d %H:%M:%S')
 timestamp=$(date -u "+%Y-%m-%dT%H%%3A%M%%3A%SZ")
 
 clean_log
-check_tencentddns || do_ddns_record
+check_pre_cleanup
+# Need run pre cleanup before get rrid list
+rrid_list=$(query_recordid | get_recordid3)
+
+for each_if in $iface; do
+	console_log "Start do interface ddns, current record_id_list:$rrid_list"
+	rrid_list=$(do_iface_ddns $each_if)
+done
