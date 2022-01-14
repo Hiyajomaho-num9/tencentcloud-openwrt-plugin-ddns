@@ -37,7 +37,10 @@
 ### 3.1.安装ipk包（推荐）
 
 登录openwrt路由器,进入系统→软件包页面，将下方软件包的地址放入从网络安装的输入框中，点击确认完成安装。
-ipk安装地址：http://openwrt-tencentddns-1301800460.cos.ap-guangzhou.myqcloud.com/luci-app-tencentddns_0.1.0-1_all.ipk
+
+官方ipk安装地址：http://openwrt-tencentddns-1301800460.cos.ap-guangzhou.myqcloud.com/luci-app-tencentddns_0.1.0-1_all.ipk
+
+双wan版本ipk安装地址：https://ghproxy.com/https://github.com/Hiyajomaho-num9/tencentcloud-openwrt-plugin-ddns/releases/download/ddns/luci-app-tencentddns_0.1.0-1_all.ipk
 ![](./images/ddns1.png)
 
 
@@ -62,12 +65,20 @@ ipk安装地址：http://openwrt-tencentddns-1301800460.cos.ap-guangzhou.myqclou
 
 ### 4.1.界面功能介绍
 
+官方版本
+
 ![](./images/ddns2.png)
 
 > 上图主要是配置DDNS插件的腾讯云参数，包括密钥ID、密钥Token、WAN-IP来源、主域名和子域名等
 
 
+双wan版本
 
+![](./images/ddns3.png)
+
+> 您可以新添wan名称来实现双wan负载均衡
+> 
+> 注意，使用前得新建两个相同名称的子域名
 
 ### 4.2.名词解释
 - **启用**：是否开启腾讯云DDNS
