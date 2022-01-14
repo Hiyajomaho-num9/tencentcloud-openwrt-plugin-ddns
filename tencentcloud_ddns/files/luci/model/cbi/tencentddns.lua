@@ -19,10 +19,10 @@ token=e:option(Value,"key_id",translate("Key ID"),translate("Key ID Mean"))
 email=e:option(Value,"key_token",translate("Key Token"),translate("Key Token Mean"))
 email.password = true
 
-iface=e:option(ListValue,"interface",translate("WAN-IP Source"),translate("Select the WAN-IP Source for TencentDDNS, like wan/internet"))
-iface:value("",translate("Select WAN-IP Source"))
+iface=e:option(DynamicList,"interface",translate("WAN-IP Source"),translate("Select the WAN-IP Source for TencentDDNS, like wan/internet"))
 iface:value("internet")
 iface:value("wan")
+iface:value("wan2")
 
 iface.rmempty=false
 main=e:option(Value,"main_domain",translate("Main Domain"),translate("For example: test.github.com -> github.com"))
